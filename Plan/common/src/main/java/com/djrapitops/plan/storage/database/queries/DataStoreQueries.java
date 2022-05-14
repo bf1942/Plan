@@ -146,7 +146,7 @@ public class DataStoreQueries {
      * @param playerName Name of the player.
      * @return Executable, use inside a {@link com.djrapitops.plan.storage.database.transactions.Transaction}
      */
-    public static Executable registerBaseUser(UUID playerUUID, long registered, String playerName) {
+    public static ExecStatement registerBaseUser(UUID playerUUID, long registered, String playerName) {
         return new ExecStatement(UsersTable.INSERT_STATEMENT) {
             @Override
             public void prepare(PreparedStatement statement) throws SQLException {
@@ -301,8 +301,8 @@ public class DataStoreQueries {
     public static Executable updateJoinAddress(UUID playerUUID, ServerUUID serverUUID, String joinAddress) {
         String sql = "UPDATE " + UserInfoTable.TABLE_NAME + " SET " +
                 UserInfoTable.JOIN_ADDRESS + "=?" +
-                WHERE + UserInfoTable.USER_UUID + "=?" +
-                AND + UserInfoTable.SERVER_UUID + "=?";
+                WHERE + UserInfoTable.USER_ID + "=" + UsersTable.SELECT_USER_ID +
+                AND + UserInfoTable.SERVER_ID + "=" + ServerTable.SELECT_SERVER_ID;
         return new ExecStatement(sql) {
             @Override
             public void prepare(PreparedStatement statement) throws SQLException {

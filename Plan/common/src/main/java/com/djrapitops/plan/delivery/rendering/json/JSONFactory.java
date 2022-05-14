@@ -17,6 +17,7 @@
 package com.djrapitops.plan.delivery.rendering.json;
 
 import com.djrapitops.plan.delivery.domain.DateObj;
+import com.djrapitops.plan.delivery.domain.datatransfer.ServerDto;
 import com.djrapitops.plan.delivery.domain.mutators.PlayerKillMutator;
 import com.djrapitops.plan.delivery.domain.mutators.SessionsMutator;
 import com.djrapitops.plan.delivery.domain.mutators.TPSMutator;
@@ -189,7 +190,12 @@ public class JSONFactory {
                 .findFirst()
                 .map(Server::getUuid).orElse(null);
 
-        Map<ServerUUID, List<TPS>> tpsData = db.query(
+        Map<ServerUUID, Integer> serverUuidToId = new HashMap<>();
+        for (Server server : serverInformation.values()) {
+            server.getId().ifPresent(serverId -> serverUuidToId.put(server.getUuid(), serverId));
+        }
+
+        Map<Integer, List<TPS>> tpsDataByServerId = db.query(
                 TPSQueries.fetchTPSDataOfAllServersBut(weekAgo, now, proxyUUID)
         );
         Map<ServerUUID, Integer> totalPlayerCounts = db.query(PlayerCountQueries.newPlayerCounts(0, now));
@@ -213,7 +219,7 @@ public class JSONFactory {
                     server.put("last_peak_players", recentPeak.map(DateObj::getValue).orElse(0));
                     server.put("best_peak_players", allTimePeak.map(DateObj::getValue).orElse(0));
 
-                    TPSMutator tpsMonth = new TPSMutator(tpsData.getOrDefault(serverUUID, Collections.emptyList()));
+                    TPSMutator tpsMonth = new TPSMutator(tpsDataByServerId.getOrDefault(serverUuidToId.get(serverUUID), Collections.emptyList()));
                     server.put("playersOnline", tpsMonth.all().stream()
                             .map(tps -> new double[]{tps.getDate(), tps.getPlayers()})
                             .toArray(double[][]::new));
@@ -266,16 +272,10 @@ public class JSONFactory {
         return tableEntries;
     }
 
-    public Map<String, Object> listServers() {
+    public Map<String, List<ServerDto>> listServers() {
         Collection<Server> servers = dbSystem.getDatabase().query(ServerQueries.fetchPlanServerInformationCollection());
-        return Maps.builder(String.class, Object.class)
-                .put("servers", servers.stream()
-                        .map(server -> Maps.builder(String.class, Object.class)
-                                .put("serverUUID", server.getUuid().toString())
-                                .put("serverName", server.getIdentifiableName())
-                                .put("proxy", server.isProxy())
-                                .build())
-                        .collect(Collectors.toList()))
-                .build();
+        return Collections.singletonMap("servers", servers.stream()
+                .map(ServerDto::fromServer)
+                .collect(Collectors.toList()));
     }
 }

@@ -32,12 +32,12 @@ import com.djrapitops.plan.settings.config.PlanConfig;
 import com.djrapitops.plan.settings.locale.Locale;
 import com.djrapitops.plan.storage.database.queries.*;
 import com.djrapitops.plan.storage.database.queries.containers.ContainerFetchQueries;
-import com.djrapitops.plan.storage.database.queries.containers.ServerPlayerContainersQuery;
 import com.djrapitops.plan.storage.database.queries.objects.*;
 import com.djrapitops.plan.storage.database.queries.objects.playertable.NetworkTablePlayersQuery;
 import com.djrapitops.plan.storage.database.queries.objects.playertable.ServerTablePlayersQuery;
 import com.djrapitops.plan.storage.database.sql.building.Sql;
 import com.djrapitops.plan.storage.database.sql.tables.UserInfoTable;
+import com.djrapitops.plan.storage.database.sql.tables.UsersTable;
 import com.djrapitops.plan.storage.database.transactions.StoreConfigTransaction;
 import com.djrapitops.plan.storage.database.transactions.Transaction;
 import com.djrapitops.plan.storage.database.transactions.commands.RemovePlayerTransaction;
@@ -47,16 +47,17 @@ import com.djrapitops.plan.storage.database.transactions.patches.RegisterDateMin
 import com.djrapitops.plan.storage.upkeep.DBCleanTask;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import utilities.*;
+import utilities.FieldFetcher;
+import utilities.RandomData;
+import utilities.TestConstants;
+import utilities.TestPluginLogger;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
-import static com.djrapitops.plan.storage.database.sql.building.Sql.SELECT;
-import static com.djrapitops.plan.storage.database.sql.building.Sql.WHERE;
+import static com.djrapitops.plan.storage.database.sql.building.Sql.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -143,7 +144,7 @@ public interface DatabaseTest extends DatabaseTestPreparer {
                 null
         ).cleanOldPlayers(db());
 
-        Collection<BaseUser> found = db().query(BaseUserQueries.fetchServerBaseUsers(serverUUID()));
+        Collection<BaseUser> found = db().query(BaseUserQueries.fetchAllBaseUsers());
         assertFalse(found.isEmpty(), "All users were deleted!! D:");
     }
 
@@ -214,23 +215,6 @@ public interface DatabaseTest extends DatabaseTestPreparer {
     }
 
     @Test
-    default void serverPlayerContainersQueryDoesNotReturnDuplicatePlayers() {
-        db().executeTransaction(TestData.storeServers());
-        executeTransactions(TestData.storePlayerOneData());
-        executeTransactions(TestData.storePlayerTwoData());
-
-        List<UUID> expected = Arrays.asList(playerUUID, player2UUID);
-        Collections.sort(expected);
-
-        Collection<UUID> result = db().query(new ServerPlayerContainersQuery(TestConstants.SERVER_UUID))
-                .stream().map(player -> player.getUnsafe(PlayerKeys.UUID))
-                .sorted()
-                .collect(Collectors.toList());
-
-        assertEquals(expected, result);
-    }
-
-    @Test
     default void sqlDateConversionSanityCheck() {
         Database db = db();
 
@@ -239,6 +223,7 @@ public interface DatabaseTest extends DatabaseTestPreparer {
         Sql sql = db.getType().getSql();
         String testSQL = SELECT + sql.dateToEpochSecond(sql.epochSecondToDate(Long.toString(expected))) + " as ms";
 
+        //noinspection Convert2Diamond Causes compiler issues without Generic type definition
         long result = db.query(new QueryAllStatement<Long>(testSQL) {
             @Override
             public Long processResults(ResultSet set) throws SQLException {
@@ -259,6 +244,7 @@ public interface DatabaseTest extends DatabaseTestPreparer {
         String testSQL = SELECT + sql.dateToDayStamp(sql.epochSecondToDate(Long.toString((time + offset) / 1000))) + " as date";
 
         String expected = deliveryUtilities().getFormatters().iso8601NoClockLong().apply(time);
+        //noinspection Convert2Diamond Causes compiler issues without Generic type definition
         String result = db.query(new QueryAllStatement<String>(testSQL) {
             @Override
             public String processResults(ResultSet set) throws SQLException {
@@ -269,7 +255,7 @@ public interface DatabaseTest extends DatabaseTestPreparer {
     }
 
     @Test
-    @Disabled
+    @Disabled("Flaky test, fails every evening.")
     default void sqlDateParsingSanitySQLDoesNotApplyTimezone() {
         Database db = db();
 
@@ -285,6 +271,7 @@ public interface DatabaseTest extends DatabaseTestPreparer {
                 String testSQL = SELECT + sql.dateToDayStamp(sql.epochSecondToDate(Long.toString((time + offset) / 1000))) + " as date";
 
                 String expected = deliveryUtilities().getFormatters().iso8601NoClockLong().apply(time);
+                //noinspection Convert2Diamond Causes compiler issues without Generic type definition
                 String result = db.query(new QueryAllStatement<String>(testSQL) {
                     @Override
                     public String processResults(ResultSet set) throws SQLException {
@@ -305,7 +292,8 @@ public interface DatabaseTest extends DatabaseTestPreparer {
                 , new Transaction() {
                     @Override
                     protected void performOperations() {
-                        execute("UPDATE " + UserInfoTable.TABLE_NAME + " SET " + UserInfoTable.REGISTERED + "=0" + WHERE + UserInfoTable.USER_UUID + "='" + playerUUID + "'");
+                        execute("UPDATE " + UserInfoTable.TABLE_NAME + " SET " + UserInfoTable.REGISTERED + "=0" +
+                                WHERE + UserInfoTable.USER_ID + "=(" + SELECT + "MAX(" + UsersTable.ID + ")" + FROM + UsersTable.TABLE_NAME + ")");
                     }
                 }
         );

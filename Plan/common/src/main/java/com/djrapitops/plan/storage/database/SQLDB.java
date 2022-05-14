@@ -32,9 +32,14 @@ import com.djrapitops.plan.storage.database.transactions.init.CreateTablesTransa
 import com.djrapitops.plan.storage.database.transactions.init.OperationCriticalTransaction;
 import com.djrapitops.plan.storage.database.transactions.init.RemoveIncorrectTebexPackageDataPatch;
 import com.djrapitops.plan.storage.database.transactions.patches.*;
+import com.djrapitops.plan.storage.file.PlanFiles;
 import com.djrapitops.plan.utilities.java.ThrowableUtils;
 import com.djrapitops.plan.utilities.logging.ErrorContext;
 import com.djrapitops.plan.utilities.logging.ErrorLogger;
+import dev.vankka.dependencydownload.DependencyManager;
+import dev.vankka.dependencydownload.classloader.IsolatedClassLoader;
+import dev.vankka.dependencydownload.repository.Repository;
+import dev.vankka.dependencydownload.repository.StandardRepository;
 import net.playeranalytics.plugin.scheduling.PluginRunnable;
 import net.playeranalytics.plugin.scheduling.RunnableFactory;
 import net.playeranalytics.plugin.scheduling.TimeAmount;
@@ -43,11 +48,11 @@ import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.concurrent.*;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -58,13 +63,23 @@ import java.util.function.Supplier;
  */
 public abstract class SQLDB extends AbstractDatabase {
 
+    private static boolean downloadDriver = true;
+
+    private static final List<Repository> DRIVER_REPOSITORIES = Arrays.asList(
+            new StandardRepository("https://papermc.io/repo/repository/maven-public/"),
+            new StandardRepository("https://repo1.maven.org/maven2/")
+    );
+
     private final Supplier<ServerUUID> serverUUIDSupplier;
 
     protected final Locale locale;
     protected final PlanConfig config;
+    protected final PlanFiles files;
     protected final RunnableFactory runnableFactory;
     protected final PluginLogger logger;
     protected final ErrorLogger errorLogger;
+
+    protected ClassLoader driverClassLoader;
 
     private Supplier<ExecutorService> transactionExecutorServiceProvider;
     private ExecutorService transactionExecutor;
@@ -73,6 +88,7 @@ public abstract class SQLDB extends AbstractDatabase {
             Supplier<ServerUUID> serverUUIDSupplier,
             Locale locale,
             PlanConfig config,
+            PlanFiles files,
             RunnableFactory runnableFactory,
             PluginLogger logger,
             ErrorLogger errorLogger
@@ -80,6 +96,7 @@ public abstract class SQLDB extends AbstractDatabase {
         this.serverUUIDSupplier = serverUUIDSupplier;
         this.locale = locale;
         this.config = config;
+        this.files = files;
         this.runnableFactory = runnableFactory;
         this.logger = logger;
         this.errorLogger = errorLogger;
@@ -96,6 +113,26 @@ public abstract class SQLDB extends AbstractDatabase {
                         }
                     }).build());
         };
+    }
+
+    public static void setDownloadDriver(boolean downloadDriver) {
+        SQLDB.downloadDriver = downloadDriver;
+    }
+
+    protected abstract List<String> getDependencyResource();
+
+    public void downloadDriver() {
+        if (downloadDriver) {
+            DependencyManager dependencyManager = new DependencyManager(files.getDataDirectory().resolve("libraries"));
+            dependencyManager.loadFromResource(getDependencyResource());
+            dependencyManager.download(null, DRIVER_REPOSITORIES);
+
+            IsolatedClassLoader classLoader = new IsolatedClassLoader();
+            dependencyManager.load(null, classLoader);
+            this.driverClassLoader = classLoader;
+        } else {
+            this.driverClassLoader = getClass().getClassLoader();
+        }
     }
 
     @Override
@@ -159,31 +196,36 @@ public abstract class SQLDB extends AbstractDatabase {
                 new VersionTableRemovalPatch(),
                 new DiskUsagePatch(),
                 new WorldsOptimizationPatch(),
-                new WorldTimesOptimizationPatch(),
                 new KillsOptimizationPatch(),
-                new SessionsOptimizationPatch(),
-                new PingOptimizationPatch(),
                 new NicknamesOptimizationPatch(),
-                new UserInfoOptimizationPatch(),
-                new GeoInfoOptimizationPatch(),
                 new TransferTableRemovalPatch(),
                 new BadAFKThresholdValuePatch(),
                 new DeleteIPsPatch(),
                 new ExtensionShowInPlayersTablePatch(),
                 new ExtensionTableRowValueLengthPatch(),
                 new CommandUsageTableRemovalPatch(),
-                new RegisterDateMinimizationPatch(),
                 new BadNukkitRegisterValuePatch(),
                 new LinkedToSecurityTablePatch(),
                 new LinkUsersToPlayersSecurityTablePatch(),
                 new LitebansTableHeaderPatch(),
                 new UserInfoHostnamePatch(),
                 new ServerIsProxyPatch(),
-                new UserInfoHostnameAllowNullPatch(),
                 new ServerTableRowPatch(),
                 new PlayerTableRowPatch(),
                 new ExtensionTableProviderValuesForPatch(),
-                new RemoveIncorrectTebexPackageDataPatch()
+                new RemoveIncorrectTebexPackageDataPatch(),
+                new ExtensionTableProviderFormattersPatch(),
+                new ServerPlanVersionPatch(),
+                new RemoveDanglingUserDataPatch(),
+                new RemoveDanglingServerDataPatch(),
+                new GeoInfoOptimizationPatch(),
+                new PingOptimizationPatch(),
+                new UserInfoOptimizationPatch(),
+                new WorldTimesOptimizationPatch(),
+                new SessionsOptimizationPatch(),
+                new UserInfoHostnameAllowNullPatch(),
+                new RegisterDateMinimizationPatch(),
+                new UsersTableNameLengthPatch()
         };
     }
 
@@ -194,12 +236,14 @@ public abstract class SQLDB extends AbstractDatabase {
      */
     private void setupDatabase() {
         executeTransaction(new CreateTablesTransaction());
+        logger.info(locale.getString(PluginLang.DB_SCHEMA_PATCH));
         for (Patch patch : patches()) {
             executeTransaction(patch);
         }
         executeTransaction(new OperationCriticalTransaction() {
             @Override
             protected void performOperations() {
+                logger.info(locale.getString(PluginLang.DB_APPLIED_PATCHES));
                 if (getState() == State.PATCHING) setState(State.OPEN);
             }
         });
@@ -238,7 +282,22 @@ public abstract class SQLDB extends AbstractDatabase {
     public void close() {
         if (getState() == State.OPEN) setState(State.CLOSING);
         closeTransactionExecutor(transactionExecutor);
+        unloadDriverClassloader();
         setState(State.CLOSED);
+    }
+
+    private void unloadDriverClassloader() {
+        // Unloading class loader causes issues when reloading.
+        // It is better to leak this memory than crash the plugin on reload.
+
+//        try {
+//            if (driverClassLoader instanceof IsolatedClassLoader) {
+//                ((IsolatedClassLoader) driverClassLoader).close();
+//            }
+            driverClassLoader = null;
+//        } catch (IOException e) {
+//            errorLogger.error(e, ErrorContext.builder().build());
+//        }
     }
 
     public abstract Connection getConnection() throws SQLException;
@@ -252,7 +311,7 @@ public abstract class SQLDB extends AbstractDatabase {
     }
 
     @Override
-    public Future<?> executeTransaction(Transaction transaction) {
+    public CompletableFuture<?> executeTransaction(Transaction transaction) {
         if (getState() == State.CLOSED) {
             throw new DBOpException("Transaction tried to execute although database is closed.");
         }
@@ -328,5 +387,9 @@ public abstract class SQLDB extends AbstractDatabase {
 
     public PluginLogger getLogger() {
         return logger;
+    }
+
+    public Locale getLocale() {
+        return locale;
     }
 }

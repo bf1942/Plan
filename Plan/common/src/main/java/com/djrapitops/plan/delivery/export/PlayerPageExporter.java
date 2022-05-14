@@ -121,7 +121,7 @@ public class PlayerPageExporter extends FileExporter {
         String jsonResourceName = toFileName(toJSONResourceName(resource)) + ".json";
 
         export(toDirectory.resolve(jsonResourceName), found.get().getBytes());
-        exportPaths.put("../v1/player?player=${encodeURIComponent(playerName)}", "./" + jsonResourceName);
+        exportPaths.put("../v1/player?player=${encodeURIComponent(playerUUID)}", "./" + jsonResourceName);
     }
 
     private String toJSONResourceName(String resource) {
@@ -133,7 +133,7 @@ public class PlayerPageExporter extends FileExporter {
             return jsonHandler.getResolver().resolve(new Request("GET", "/v1/" + resource, null, Collections.emptyMap()));
         } catch (WebException e) {
             // The rest of the exceptions should not be thrown
-            throw new IllegalStateException("Unexpected exception thrown: " + e.toString(), e);
+            throw new IllegalStateException("Unexpected exception thrown: " + e, e);
         }
     }
 
@@ -143,14 +143,14 @@ public class PlayerPageExporter extends FileExporter {
                 "../img/Flaticon_circle.png",
                 "../css/sb-admin-2.css",
                 "../css/style.css",
+                "../css/noauth.css",
                 "../vendor/datatables/datatables.min.js",
                 "../vendor/datatables/datatables.min.css",
-                "../vendor/highcharts/highstock.js",
-                "../vendor/highcharts/map.js",
-                "../vendor/highcharts/world.js",
-                "../vendor/highcharts/drilldown.js",
-                "../vendor/highcharts/highcharts-more.js",
-                "../vendor/highcharts/no-data-to-display.js",
+                "../vendor/highcharts/modules/map.js",
+                "../vendor/highcharts/mapdata/world.js",
+                "../vendor/highcharts/modules/drilldown.js",
+                "../vendor/highcharts/highcharts.js",
+                "../vendor/highcharts/modules/no-data-to-display.js",
                 "../vendor/fullcalendar/fullcalendar.min.css",
                 "../vendor/momentjs/moment.js",
                 "../vendor/masonry/masonry.pkgd.min.js",

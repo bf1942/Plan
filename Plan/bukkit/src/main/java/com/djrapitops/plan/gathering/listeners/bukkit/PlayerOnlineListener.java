@@ -51,6 +51,7 @@ import javax.inject.Inject;
 import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -165,7 +166,7 @@ public class PlayerOnlineListener implements Listener {
         BukkitAFKListener.afkTracker.performedAction(playerUUID, time);
 
         String world = player.getWorld().getName();
-        String gm = player.getGameMode().name();
+        String gm = Optional.ofNullable(player.getGameMode()).map(gameMode -> gameMode.name()).orElse("Unknown");
 
         Database database = dbSystem.getDatabase();
         database.executeTransaction(new WorldNameStoreTransaction(serverUUID, world));
@@ -176,32 +177,34 @@ public class PlayerOnlineListener implements Listener {
         String playerName = player.getName();
         String displayName = player.getDisplayName();
 
-        boolean gatheringGeolocations = config.isTrue(DataGatheringSettings.GEOLOCATIONS);
-        if (gatheringGeolocations) {
-            database.executeTransaction(
-                    new GeoInfoStoreTransaction(playerUUID, address, time, geolocationCache::getCountry)
-            );
-        }
-
         database.executeTransaction(new PlayerServerRegisterTransaction(playerUUID,
-                player::getFirstPlayed, playerName, serverUUID, getHostName));
-        database.executeTransaction(new OperatorStatusTransaction(playerUUID, serverUUID, player.isOp()));
+                        player::getFirstPlayed, playerName, serverUUID, getHostName))
+                .thenRunAsync(() -> {
+                    boolean gatheringGeolocations = config.isTrue(DataGatheringSettings.GEOLOCATIONS);
+                    if (gatheringGeolocations) {
+                        database.executeTransaction(
+                                new GeoInfoStoreTransaction(playerUUID, address, time, geolocationCache::getCountry)
+                        );
+                    }
 
-        ActiveSession session = new ActiveSession(playerUUID, serverUUID, time, world, gm);
-        session.getExtraData().put(PlayerName.class, new PlayerName(playerName));
-        session.getExtraData().put(ServerName.class, new ServerName(serverInfo.getServer().getIdentifiableName()));
-        sessionCache.cacheSession(playerUUID, session)
-                .ifPresent(previousSession -> database.executeTransaction(new SessionEndTransaction(previousSession)));
+                    database.executeTransaction(new OperatorStatusTransaction(playerUUID, serverUUID, player.isOp()));
 
-        database.executeTransaction(new NicknameStoreTransaction(
-                playerUUID, new Nickname(displayName, time, serverUUID),
-                (uuid, name) -> nicknameCache.getDisplayName(playerUUID).map(name::equals).orElse(false)
-        ));
+                    ActiveSession session = new ActiveSession(playerUUID, serverUUID, time, world, gm);
+                    session.getExtraData().put(PlayerName.class, new PlayerName(playerName));
+                    session.getExtraData().put(ServerName.class, new ServerName(serverInfo.getServer().getIdentifiableName()));
+                    sessionCache.cacheSession(playerUUID, session)
+                            .ifPresent(previousSession -> database.executeTransaction(new SessionEndTransaction(previousSession)));
 
-        processing.submitNonCritical(() -> extensionService.updatePlayerValues(playerUUID, playerName, CallEvents.PLAYER_JOIN));
-        if (config.isTrue(ExportSettings.EXPORT_ON_ONLINE_STATUS_CHANGE)) {
-            processing.submitNonCritical(() -> exporter.exportPlayerPage(playerUUID, playerName));
-        }
+                    database.executeTransaction(new NicknameStoreTransaction(
+                            playerUUID, new Nickname(displayName, time, serverUUID),
+                            (uuid, name) -> nicknameCache.getDisplayName(playerUUID).map(name::equals).orElse(false)
+                    ));
+
+                    processing.submitNonCritical(() -> extensionService.updatePlayerValues(playerUUID, playerName, CallEvents.PLAYER_JOIN));
+                    if (config.isTrue(ExportSettings.EXPORT_ON_ONLINE_STATUS_CHANGE)) {
+                        processing.submitNonCritical(() -> exporter.exportPlayerPage(playerUUID, playerName));
+                    }
+                });
     }
 
     private String getHostname(Player player) {
