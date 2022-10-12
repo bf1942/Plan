@@ -82,7 +82,7 @@ subprojects {
         slf4jVersion = "1.7.36"
         geoIpVersion = "2.16.1"
         gsonVersion = "2.9.0"
-        dependencyDownloadVersion = "1.2.1"
+        dependencyDownloadVersion = "1.3.0"
 
         bstatsVersion = "2.2.1"
         placeholderapiVersion = "2.11.1"
